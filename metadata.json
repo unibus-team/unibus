@@ -1,0 +1,6 @@
+{
+  "name": "UniBus — Tanta University Smart Commute",
+  "description": "University transportation platform for Tanta University & Sabrabay Complex students: search trips, compare fares and seats, book rides, and manage campus transit.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

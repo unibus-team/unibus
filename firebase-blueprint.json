@@ -1,0 +1,244 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered student or admin profile with PII isolated to owner and admin.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "email": { "type": "string", "format": "email", "maxLength": 150 },
+        "role": { "type": "string", "enum": ["student", "moderator", "admin"] },
+        "homeCity": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "trustScore": { "type": "number" },
+        "status": { "type": "string", "enum": ["Active", "Suspended"] },
+        "createdAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["uid", "name", "email", "role", "homeCity", "trustScore", "status", "createdAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted admin allowlist document keyed by Firebase Auth UID.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 150 },
+        "createdAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "AdminDirectory": {
+      "title": "AdminDirectory",
+      "description": "Admin-only index of user and booking IDs for single-document reads.",
+      "type": "object",
+      "properties": {
+        "userIds": { "type": "array" },
+        "bookingIds": { "type": "array" },
+        "updatedAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["userIds", "bookingIds", "updatedAt"]
+    },
+    "AdminInvite": {
+      "title": "AdminInvite",
+      "description": "Single-use expiring invitation for admin or moderator onboarding (hashed token).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "tokenHash": { "type": "string", "minLength": 32, "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 150 },
+        "role": { "type": "string", "enum": ["admin", "moderator"] },
+        "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdByEmail": { "type": "string", "format": "email", "maxLength": 150 },
+        "createdAt": { "type": "string", "maxLength": 40 },
+        "expiresAt": { "type": "string", "maxLength": 40 },
+        "usedAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "tokenHash", "email", "role", "createdByUid", "createdByEmail", "createdAt", "expiresAt", "usedAt"]
+    },
+    "AuditLogEntry": {
+      "title": "AuditLogEntry",
+      "description": "Immutable audit log entry for every admin and moderator action.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "actorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorEmail": { "type": "string", "format": "email", "maxLength": 150 },
+        "actorRole": { "type": "string", "enum": ["student", "moderator", "admin"] },
+        "action": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "targetPath": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "before": { "type": "string", "maxLength": 400 },
+        "after": { "type": "string", "maxLength": 400 },
+        "createdAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "actorUid", "actorEmail", "actorRole", "action", "targetPath", "createdAt"]
+    },
+    "Bus": {
+      "title": "Bus",
+      "description": "Fleet vehicle serving Tanta and Sabrabay Complex routes.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "category": { "type": "string", "enum": ["AC", "VIP", "Economy", "Luxury", "Microbus"] },
+        "totalSeats": { "type": "number" },
+        "plateNumber": { "type": "string", "minLength": 1, "maxLength": 30 },
+        "amenities": { "type": "array" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "name", "category", "totalSeats", "plateNumber", "amenities", "active"]
+    },
+    "RouteInfo": {
+      "title": "RouteInfo",
+      "description": "Transit corridor connecting Gharbia cities and hubs to Sabrabay Complex.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "from": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "to": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "distanceKm": { "type": "number" },
+        "estDurationMin": { "type": "number" },
+        "corridorNotes": { "type": "string", "maxLength": 200 }
+      },
+      "required": ["id", "from", "to", "distanceKm", "estDurationMin", "corridorNotes"]
+    },
+    "Trip": {
+      "title": "Trip",
+      "description": "Scheduled departure on a specific route and bus.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "busId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "routeId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "departureTime": { "type": "string", "maxLength": 10 },
+        "arrivalTime": { "type": "string", "maxLength": 10 },
+        "priceEgp": { "type": "number" },
+        "freeSeats": { "type": "number" },
+        "bookedSeats": { "type": "number" },
+        "status": { "type": "string", "enum": ["Active", "Cancelled", "Completed"] },
+        "gateDropoff": { "type": "string", "maxLength": 120 }
+      },
+      "required": ["id", "busId", "routeId", "date", "departureTime", "arrivalTime", "priceEgp", "freeSeats", "bookedSeats", "status", "gateDropoff"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "Student seat reservation linked to a scheduled trip.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "reference": { "type": "string", "minLength": 3, "maxLength": 20 },
+        "tripId": { "type": "number" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "routeLabel": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "passengers": { "type": "number" },
+        "totalEgp": { "type": "number" },
+        "status": { "type": "string", "enum": ["Confirmed", "Cancelled"] },
+        "pickupNote": { "type": "string", "maxLength": 200 },
+        "createdAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "reference", "tripId", "userId", "userName", "routeLabel", "passengers", "totalEgp", "status", "createdAt"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Student trip rating and feedback comment.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "routeLabel": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "rating": { "type": "number" },
+        "comment": { "type": "string", "minLength": 1, "maxLength": 400 },
+        "createdAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "userId", "userName", "routeLabel", "rating", "comment", "createdAt"]
+    },
+    "StationHub": {
+      "title": "StationHub",
+      "description": "Terminal, railway station, or Sabrabay campus gate with live congestion state.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "nameAr": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "city": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "type": { "type": "string", "enum": ["Terminal", "Train Station", "Campus Gate", "Corridor Stop"] },
+        "linesCount": { "type": "number" },
+        "avgHeadwayMin": { "type": "number" },
+        "congestion": { "type": "string", "enum": ["Smooth", "Moderate", "Heavy"] },
+        "landmarks": { "type": "string", "maxLength": 200 },
+        "lastUpdated": { "type": "string", "maxLength": 40 },
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "required": ["id", "name", "nameAr", "city", "type", "linesCount", "avgHeadwayMin", "congestion", "landmarks", "lastUpdated", "x", "y"]
+    },
+    "TrafficReport": {
+      "title": "TrafficReport",
+      "description": "Crowdsourced station congestion report submitted by verified students.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "stationId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "stationName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "congestion": { "type": "string", "enum": ["Smooth", "Moderate", "Heavy"] },
+        "fareNote": { "type": "string", "maxLength": 200 },
+        "createdAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "stationId", "stationName", "userId", "userName", "congestion", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Private user profiles keyed by Firebase Auth UID."
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Verified admin records."
+    },
+    "/adminMeta/{docId}": {
+      "schema": { "$ref": "#/entities/AdminDirectory" },
+      "description": "Admin-only directory index of user and booking IDs."
+    },
+    "/adminInvites/{inviteId}": {
+      "schema": { "$ref": "#/entities/AdminInvite" },
+      "description": "Single-use expiring invitations keyed by SHA-256 token hash."
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLogEntry" },
+      "description": "Immutable admin/moderator action audit trail."
+    },
+    "/buses/{busId}": {
+      "schema": { "$ref": "#/entities/Bus" },
+      "description": "Public fleet catalog managed by admins."
+    },
+    "/routes/{routeId}": {
+      "schema": { "$ref": "#/entities/RouteInfo" },
+      "description": "Public transit corridors managed by admins."
+    },
+    "/trips/{tripId}": {
+      "schema": { "$ref": "#/entities/Trip" },
+      "description": "Scheduled departures visible publicly and updated atomically on booking."
+    },
+    "/bookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/Booking" },
+      "description": "Student bookings isolated to the owning student or admins."
+    },
+    "/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/Review" },
+      "description": "Student trip reviews."
+    },
+    "/stations/{stationId}": {
+      "schema": { "$ref": "#/entities/StationHub" },
+      "description": "Tanta & Sabrabay stations and hubs."
+    },
+    "/trafficReports/{reportId}": {
+      "schema": { "$ref": "#/entities/TrafficReport" },
+      "description": "Crowdsourced station congestion reports."
+    }
+  }
+}

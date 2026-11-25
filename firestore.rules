@@ -1,0 +1,435 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helper Primitives ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isBootstrappedAdminEmail() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && (
+          request.auth.token.email == 'mohamedalkawaity@gmail.com'
+          || request.auth.token.email == 'marwaneltaweel4@gmail.com'
+        );
+    }
+
+    function isProtectedAdminEmail(email) {
+      return email in ['mohamedalkawaity@gmail.com', 'marwaneltaweel4@gmail.com'];
+    }
+
+    function isStaff() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && (
+          isBootstrappedAdminEmail()
+          || exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        );
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && (
+          isBootstrappedAdminEmail()
+          || (
+            exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+            && (
+              !('role' in get(/databases/$(database)/documents/admins/$(request.auth.uid)).data)
+              || get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin'
+            )
+          )
+        );
+    }
+
+    // --- Validation Blueprints ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'role', 'homeCity', 'trustScore', 'status', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'name', 'email', 'role', 'homeCity', 'trustScore', 'status', 'createdAt'])
+        && data.uid is string && data.uid.size() <= 128
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
+        && data.role in ['student', 'moderator', 'admin']
+        && data.homeCity is string && data.homeCity.size() >= 1 && data.homeCity.size() <= 60
+        && data.trustScore is number && data.trustScore >= 0.0 && data.trustScore <= 1.0
+        && data.status in ['Active', 'Suspended']
+        && data.createdAt is string && data.createdAt.size() <= 40;
+    }
+
+    function isValidAdminRecord(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'email', 'role', 'mfaEnrolled', 'inviteTokenHash', 'createdAt'])
+        && data.uid is string && data.uid == userId && data.uid.size() <= 128
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
+        && (!('role' in data) || data.role in ['admin', 'moderator'])
+        && (!('mfaEnrolled' in data) || data.mfaEnrolled is bool)
+        && (!('inviteTokenHash' in data) || (data.inviteTokenHash is string && data.inviteTokenHash.size() <= 128))
+        && data.createdAt is string && data.createdAt.size() <= 40;
+    }
+
+    function isValidAdminMeta(data) {
+      return data.keys().hasAll(['userIds', 'bookingIds', 'updatedAt'])
+        && data.keys().hasOnly(['userIds', 'bookingIds', 'auditLogIds', 'updatedAt'])
+        && data.userIds is list && data.userIds.size() <= 500
+        && (data.userIds.size() == 0 || data.userIds[0] is string)
+        && data.bookingIds is list && data.bookingIds.size() <= 500
+        && (data.bookingIds.size() == 0 || data.bookingIds[0] is string)
+        && (!('auditLogIds' in data) || (data.auditLogIds is list && data.auditLogIds.size() <= 500 && (data.auditLogIds.size() == 0 || data.auditLogIds[0] is string)))
+        && data.updatedAt is string && data.updatedAt.size() <= 40;
+    }
+
+    function isValidAdminInvite(data) {
+      return data.keys().hasAll(['id', 'tokenHash', 'email', 'role', 'createdByUid', 'createdByEmail', 'createdAt', 'expiresAt', 'usedAt'])
+        && data.keys().hasOnly(['id', 'tokenHash', 'email', 'role', 'createdByUid', 'createdByEmail', 'createdAt', 'expiresAt', 'usedAt'])
+        && data.id is string && data.id.size() >= 32 && data.id.size() <= 128
+        && data.tokenHash is string && data.tokenHash == data.id
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
+        && data.role in ['admin', 'moderator']
+        && data.createdByUid is string && data.createdByUid.size() <= 128
+        && data.createdByEmail is string && data.createdByEmail.size() <= 150
+        && data.createdAt is string && data.createdAt.size() <= 40
+        && data.expiresAt is string && data.expiresAt.size() <= 40
+        && (data.usedAt == null || (data.usedAt is string && data.usedAt.size() <= 40));
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['id', 'actorUid', 'actorEmail', 'actorRole', 'action', 'targetPath', 'createdAt'])
+        && data.keys().hasOnly(['id', 'actorUid', 'actorEmail', 'actorRole', 'action', 'targetPath', 'before', 'after', 'createdAt'])
+        && data.id is string && data.id.size() <= 64
+        && data.actorUid is string && data.actorUid.size() <= 128
+        && data.actorEmail is string && data.actorEmail.size() <= 150
+        && data.actorRole in ['student', 'moderator', 'admin']
+        && data.action is string && data.action.size() >= 1 && data.action.size() <= 80
+        && data.targetPath is string && data.targetPath.size() >= 1 && data.targetPath.size() <= 160
+        && (!('before' in data) || (data.before is string && data.before.size() <= 400))
+        && (!('after' in data) || (data.after is string && data.after.size() <= 400))
+        && data.createdAt is string && data.createdAt.size() <= 40;
+    }
+
+    function isValidBus(data) {
+      return data.keys().hasAll(['id', 'name', 'category', 'totalSeats', 'plateNumber', 'amenities', 'active'])
+        && data.keys().hasOnly(['id', 'name', 'category', 'totalSeats', 'plateNumber', 'amenities', 'active'])
+        && data.id is string && data.id.size() <= 64
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 60
+        && data.category in ['AC', 'VIP', 'Economy', 'Luxury', 'Microbus']
+        && data.totalSeats is number && data.totalSeats >= 1 && data.totalSeats <= 100
+        && data.plateNumber is string && data.plateNumber.size() >= 1 && data.plateNumber.size() <= 30
+        && data.amenities is list && data.amenities.size() <= 10
+        && (data.amenities.size() == 0 || data.amenities[0] is string)
+        && data.active is bool;
+    }
+
+    function isValidRoute(data) {
+      return data.keys().hasAll(['id', 'from', 'to', 'distanceKm', 'estDurationMin', 'corridorNotes'])
+        && data.keys().hasOnly(['id', 'from', 'to', 'distanceKm', 'estDurationMin', 'corridorNotes'])
+        && data.id is string && data.id.size() <= 64
+        && data.from is string && data.from.size() >= 1 && data.from.size() <= 80
+        && data.to is string && data.to.size() >= 1 && data.to.size() <= 80
+        && data.distanceKm is number && data.distanceKm > 0 && data.distanceKm <= 1000
+        && data.estDurationMin is number && data.estDurationMin > 0 && data.estDurationMin <= 1000
+        && data.corridorNotes is string && data.corridorNotes.size() <= 200;
+    }
+
+    function isValidTrip(data) {
+      return data.keys().hasAll(['id', 'busId', 'routeId', 'date', 'departureTime', 'arrivalTime', 'priceEgp', 'freeSeats', 'bookedSeats', 'status', 'gateDropoff'])
+        && data.keys().hasOnly(['id', 'busId', 'routeId', 'date', 'departureTime', 'arrivalTime', 'priceEgp', 'freeSeats', 'bookedSeats', 'status', 'gateDropoff'])
+        && data.id is number
+        && data.busId is string && data.busId.size() <= 64
+        && data.routeId is string && data.routeId.size() <= 64
+        && data.date is string && data.date.size() == 10 && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && data.departureTime is string && data.departureTime.size() <= 10
+        && data.arrivalTime is string && data.arrivalTime.size() <= 10
+        && data.priceEgp is number && data.priceEgp >= 0 && data.priceEgp <= 5000
+        && data.freeSeats is number && data.freeSeats >= 0 && data.freeSeats <= 100
+        && data.bookedSeats is number && data.bookedSeats >= 0 && data.bookedSeats <= 100
+        && data.status in ['Active', 'Cancelled', 'Completed']
+        && data.gateDropoff is string && data.gateDropoff.size() <= 120;
+    }
+
+    function isValidBooking(data) {
+      return data.keys().hasAll(['id', 'reference', 'tripId', 'userId', 'userName', 'routeLabel', 'passengers', 'totalEgp', 'status', 'createdAt'])
+        && data.keys().hasOnly(['id', 'reference', 'tripId', 'userId', 'userName', 'routeLabel', 'passengers', 'totalEgp', 'status', 'pickupNote', 'createdAt'])
+        && data.id is string && data.id.size() <= 64
+        && data.reference is string && data.reference.size() >= 3 && data.reference.size() <= 20
+        && data.tripId is number
+        && data.userId is string && data.userId.size() <= 128
+        && data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 80
+        && data.routeLabel is string && data.routeLabel.size() >= 1 && data.routeLabel.size() <= 160
+        && data.passengers is number && data.passengers >= 1 && data.passengers <= 10
+        && data.totalEgp is number && data.totalEgp >= 0 && data.totalEgp <= 50000
+        && data.status in ['Confirmed', 'Cancelled']
+        && (!('pickupNote' in data) || (data.pickupNote is string && data.pickupNote.size() <= 200))
+        && data.createdAt is string && data.createdAt.size() <= 40;
+    }
+
+    function isValidReview(data) {
+      return data.keys().hasAll(['id', 'userId', 'userName', 'routeLabel', 'rating', 'comment', 'createdAt'])
+        && data.keys().hasOnly(['id', 'userId', 'userName', 'routeLabel', 'rating', 'comment', 'createdAt'])
+        && data.id is string && data.id.size() <= 64
+        && data.userId is string && data.userId.size() <= 128
+        && data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 80
+        && data.routeLabel is string && data.routeLabel.size() >= 1 && data.routeLabel.size() <= 160
+        && data.rating is number && data.rating >= 1 && data.rating <= 5
+        && data.comment is string && data.comment.size() >= 1 && data.comment.size() <= 400
+        && data.createdAt is string && data.createdAt.size() <= 40;
+    }
+
+    function isValidStation(data) {
+      return data.keys().hasAll(['id', 'name', 'nameAr', 'city', 'type', 'linesCount', 'avgHeadwayMin', 'congestion', 'landmarks', 'lastUpdated', 'x', 'y'])
+        && data.keys().hasOnly(['id', 'name', 'nameAr', 'city', 'type', 'linesCount', 'avgHeadwayMin', 'congestion', 'landmarks', 'lastUpdated', 'x', 'y'])
+        && data.id is string && data.id.size() <= 64
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.nameAr is string && data.nameAr.size() >= 1 && data.nameAr.size() <= 120
+        && data.city is string && data.city.size() >= 1 && data.city.size() <= 80
+        && data.type in ['Terminal', 'Train Station', 'Campus Gate', 'Corridor Stop']
+        && data.linesCount is number && data.linesCount >= 0 && data.linesCount <= 100
+        && data.avgHeadwayMin is number && data.avgHeadwayMin >= 1 && data.avgHeadwayMin <= 180
+        && data.congestion in ['Smooth', 'Moderate', 'Heavy']
+        && data.landmarks is string && data.landmarks.size() <= 200
+        && data.lastUpdated is string && data.lastUpdated.size() <= 40
+        && data.x is number && data.y is number;
+    }
+
+    function isValidTrafficReport(data) {
+      return data.keys().hasAll(['id', 'stationId', 'stationName', 'userId', 'userName', 'congestion', 'createdAt'])
+        && data.keys().hasOnly(['id', 'stationId', 'stationName', 'userId', 'userName', 'congestion', 'fareNote', 'createdAt'])
+        && data.id is string && data.id.size() <= 64
+        && data.stationId is string && data.stationId.size() <= 64
+        && data.stationName is string && data.stationName.size() >= 1 && data.stationName.size() <= 120
+        && data.userId is string && data.userId.size() <= 128
+        && data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 80
+        && data.congestion in ['Smooth', 'Moderate', 'Heavy']
+        && (!('fareNote' in data) || (data.fareNote is string && data.fareNote.size() <= 200))
+        && data.createdAt is string && data.createdAt.size() <= 40;
+    }
+
+    // --- Collection Rules ---
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isStaff());
+      allow list: if isSignedIn() && (isBootstrappedAdminEmail() || existing().uid == request.auth.uid);
+      allow create: if isValidId(userId) && isSignedIn() && isValidUser(incoming())
+        && incoming().uid == userId
+        && (
+          (
+            isOwner(userId)
+            && (
+              (incoming().role == 'student' && incoming().status == 'Active')
+              || (incoming().role == 'admin' && isBootstrappedAdminEmail())
+              || (
+                incoming().role in ['admin', 'moderator']
+                && existsAfter(/databases/$(database)/documents/admins/$(userId))
+                && getAfter(/databases/$(database)/documents/admins/$(userId)).data.role == incoming().role
+              )
+            )
+          )
+          || isAdmin()
+        );
+      allow update: if isValidId(userId) && isSignedIn() && isValidUser(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && (
+          (
+            isAdmin()
+            && (userId != request.auth.uid || (incoming().role == existing().role && incoming().status == existing().status))
+            && (!isProtectedAdminEmail(existing().email) || (incoming().role == 'admin' && incoming().status == 'Active'))
+          )
+          || (
+            isOwner(userId)
+            && incoming().role == existing().role
+            && incoming().status == existing().status
+            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'homeCity', 'trustScore'])
+          )
+        );
+      allow delete: if isValidId(userId) && isAdmin() && userId != request.auth.uid && !isProtectedAdminEmail(existing().email);
+    }
+
+    match /admins/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isStaff());
+      allow list: if isBootstrappedAdminEmail();
+      allow create: if isValidId(userId) && isValidAdminRecord(incoming(), userId)
+        && (
+          isAdmin()
+          || (
+            isOwner(userId)
+            && incoming().inviteTokenHash is string
+            && exists(/databases/$(database)/documents/adminInvites/$(incoming().inviteTokenHash))
+            && get(/databases/$(database)/documents/adminInvites/$(incoming().inviteTokenHash)).data.usedAt == null
+            && get(/databases/$(database)/documents/adminInvites/$(incoming().inviteTokenHash)).data.email == request.auth.token.email
+            && get(/databases/$(database)/documents/adminInvites/$(incoming().inviteTokenHash)).data.role == incoming().role
+            && getAfter(/databases/$(database)/documents/adminInvites/$(incoming().inviteTokenHash)).data.usedAt is string
+          )
+        );
+      allow update: if isValidId(userId) && isValidAdminRecord(incoming(), userId)
+        && (
+          isAdmin()
+          || (isOwner(userId) && isStaff() && incoming().diff(existing()).affectedKeys().hasOnly(['mfaEnrolled']))
+        );
+      allow delete: if isValidId(userId) && isAdmin() && userId != request.auth.uid && !isProtectedAdminEmail(existing().email);
+    }
+
+    match /adminInvites/{inviteId} {
+      allow get: if isValidId(inviteId) && isSignedIn();
+      allow list: if isBootstrappedAdminEmail();
+      allow create: if isValidId(inviteId) && isAdmin() && isValidAdminInvite(incoming())
+        && incoming().id == inviteId
+        && incoming().usedAt == null;
+      allow update: if isValidId(inviteId) && isSignedIn() && isValidAdminInvite(incoming())
+        && existing().usedAt == null
+        && incoming().usedAt is string
+        && incoming().email == request.auth.token.email
+        && incoming().tokenHash == existing().tokenHash
+        && incoming().role == existing().role
+        && incoming().expiresAt == existing().expiresAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['usedAt']);
+      allow delete: if isValidId(inviteId) && isAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      allow get: if isValidId(logId) && isAdmin();
+      allow list: if isBootstrappedAdminEmail();
+      allow create: if isValidId(logId) && isStaff() && isValidAuditLog(incoming())
+        && incoming().actorUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /adminMeta/{docId} {
+      allow get: if isValidId(docId) && isStaff();
+      allow list: if false;
+      allow create: if isValidId(docId) && isStaff() && isValidAdminMeta(incoming());
+      allow update: if isValidId(docId) && isSignedIn() && isValidAdminMeta(incoming())
+        && (
+          isStaff()
+          || (
+            incoming().userIds.hasAll(existing().userIds)
+            && incoming().bookingIds.hasAll(existing().bookingIds)
+            && incoming().userIds.size() <= existing().userIds.size() + 1
+            && incoming().bookingIds.size() <= existing().bookingIds.size() + 1
+          )
+        );
+      allow delete: if isValidId(docId) && isAdmin();
+    }
+
+    match /buses/{busId} {
+      allow get: if isValidId(busId);
+      allow list: if true;
+      allow create: if isValidId(busId) && isAdmin() && isValidBus(incoming());
+      allow update: if isValidId(busId) && isAdmin() && isValidBus(incoming())
+        && incoming().id == existing().id;
+      allow delete: if isValidId(busId) && isAdmin();
+    }
+
+    match /routes/{routeId} {
+      allow get: if isValidId(routeId);
+      allow list: if true;
+      allow create: if isValidId(routeId) && isAdmin() && isValidRoute(incoming());
+      allow update: if isValidId(routeId) && isAdmin() && isValidRoute(incoming())
+        && incoming().id == existing().id;
+      allow delete: if isValidId(routeId) && isAdmin();
+    }
+
+    match /trips/{tripId} {
+      allow get: if isValidId(tripId);
+      allow list: if true;
+      allow create: if isValidId(tripId) && isStaff() && isValidTrip(incoming());
+      allow update: if isValidId(tripId) && isSignedIn() && isValidTrip(incoming())
+        && incoming().id == existing().id
+        && (
+          isStaff()
+          || (
+            incoming().diff(existing()).affectedKeys().hasOnly(['freeSeats', 'bookedSeats'])
+            && incoming().freeSeats + incoming().bookedSeats == existing().freeSeats + existing().bookedSeats
+          )
+        );
+      allow delete: if isValidId(tripId) && isAdmin();
+    }
+
+    match /bookings/{bookingId} {
+      allow get: if isValidId(bookingId) && isSignedIn() && (existing().userId == request.auth.uid || isStaff());
+      allow list: if isSignedIn() && (isBootstrappedAdminEmail() || existing().userId == request.auth.uid);
+      allow create: if isValidId(bookingId) && isSignedIn() && isValidBooking(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'Confirmed';
+      allow update: if isValidId(bookingId) && isSignedIn() && isValidBooking(incoming())
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && (
+          isStaff()
+          || (
+            existing().userId == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status'])
+          )
+        );
+      allow delete: if isValidId(bookingId) && isAdmin();
+    }
+
+    match /reviews/{reviewId} {
+      allow get: if isValidId(reviewId);
+      allow list: if true;
+      allow create: if isValidId(reviewId) && isSignedIn() && isValidReview(incoming())
+        && incoming().userId == request.auth.uid;
+      allow update, delete: if isValidId(reviewId) && isStaff();
+    }
+
+    match /stations/{stationId} {
+      allow get: if isValidId(stationId);
+      allow list: if true;
+      allow create: if isValidId(stationId) && isAdmin() && isValidStation(incoming());
+      allow update: if isValidId(stationId) && isSignedIn() && isValidStation(incoming())
+        && incoming().id == existing().id
+        && (
+          isStaff()
+          || incoming().diff(existing()).affectedKeys().hasOnly(['congestion', 'lastUpdated'])
+        );
+      allow delete: if isValidId(stationId) && isAdmin();
+    }
+
+    match /trafficReports/{reportId} {
+      allow get: if isValidId(reportId);
+      allow list: if true;
+      allow create: if isValidId(reportId) && isSignedIn() && isValidTrafficReport(incoming())
+        && incoming().userId == request.auth.uid;
+      allow update, delete: if isValidId(reportId) && isStaff();
+    }
+
+    match /publicStats/{statId} {
+      allow get: if isValidId(statId);
+      allow list: if true;
+      allow create, update: if isValidId(statId) && isSignedIn()
+        && incoming().keys().hasAll(['studentCount', 'bookingsCount', 'updatedAt'])
+        && incoming().keys().hasOnly(['studentCount', 'bookingsCount', 'updatedAt'])
+        && incoming().studentCount is number
+        && incoming().bookingsCount is number
+        && incoming().updatedAt is string && incoming().updatedAt.size() <= 40;
+      allow delete: if isValidId(statId) && isAdmin();
+    }
+
+    match /test/{docId} {
+      allow get: if isValidId(docId);
+      allow write: if false;
+    }
+  }
+}
